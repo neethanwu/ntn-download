@@ -4,7 +4,7 @@
 const [major, minor] = process.version.slice(1).split('.').map(Number);
 if (major < 20 || (major === 20 && minor < 12)) {
   console.error(
-    `\nnotion-to-fs requires Node.js 20.12 or later.\n` +
+    `\nnotion-download requires Node.js 20.12 or later.\n` +
     `You are running ${process.version}.\n\n` +
     `Download the latest version from: https://nodejs.org\n`
   );

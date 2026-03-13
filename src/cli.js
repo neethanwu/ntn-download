@@ -3,7 +3,7 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { NotionClient } from './notion.js';
 import { loadConfig, saveConfig } from './config.js';
-import { getDefaultSavePath } from './utils.js';
+import { getSaveLocationOptions, isWritablePath } from './utils.js';
 import { downloadPages } from './download.js';
 
 /** Exit cleanly if the user cancels a prompt. */
@@ -15,8 +15,24 @@ function exitIfCancelled(value) {
   return value;
 }
 
+const BANNER = `
+███╗   ██╗ ██████╗ ████████╗██╗ ██████╗ ███╗   ██╗
+████╗  ██║██╔═══██╗╚══██╔══╝██║██╔═══██╗████╗  ██║
+██╔██╗ ██║██║   ██║   ██║   ██║██║   ██║██╔██╗ ██║
+██║╚██╗██║██║   ██║   ██║   ██║██║   ██║██║╚██╗██║
+██║ ╚████║╚██████╔╝   ██║   ██║╚██████╔╝██║ ╚████║
+╚═╝  ╚═══╝ ╚═════╝    ╚═╝   ╚═╝ ╚═════╝ ╚═╝  ╚═══╝
+██████╗  ██████╗ ██╗    ██╗███╗   ██╗██╗      ██████╗  █████╗ ██████╗
+██╔══██╗██╔═══██╗██║    ██║████╗  ██║██║     ██╔═══██╗██╔══██╗██╔══██╗
+██║  ██║██║   ██║██║ █╗ ██║██╔██╗ ██║██║     ██║   ██║███████║██║  ██║
+██║  ██║██║   ██║██║███╗██║██║╚██╗██║██║     ██║   ██║██╔══██║██║  ██║
+██████╔╝╚██████╔╝╚███╔███╔╝██║ ╚████║███████╗╚██████╔╝██║  ██║██████╔╝
+╚═════╝  ╚═════╝  ╚══╝╚══╝ ╚═╝  ╚═══╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═════╝
+`;
+
 async function main() {
-  p.intro('notion-to-fs');
+  console.log(BANNER);
+  p.intro('notion-download v0.1.0');
 
   // ── Step 1: Token ─────────────────────────────────────────────────
   let token = null;
@@ -41,15 +57,15 @@ async function main() {
     p.note(
       [
         '1. Open: https://www.notion.so/profile/integrations/internal/form/new-integration',
-        '2. Fill in a name (e.g. "notion-to-fs"), select your workspace',
-        '3. Under Capabilities: check only "Read content", uncheck everything else',
+        '2. Fill in a name (e.g. "export-to-fs"), select your workspace',
+        '   Note: the name cannot contain the word "notion"',
+        '3. Under Capabilities:',
+        '   - Content: check only "Read content", uncheck the rest',
+        '   - Comments: uncheck all',
+        '   - User capabilities: select "No user information"',
         '4. Click "Create" → copy the "Internal Integration Secret"',
-        '',
-        'Then share pages with your integration:',
-        '  Open a page → ••• menu → Connections → Add your integration',
-        '  (Sharing a parent page shares all its children automatically)',
       ].join('\n'),
-      'First, set up a Notion integration'
+      'Step 1: Create a Notion integration'
     );
 
     token = exitIfCancelled(
@@ -84,81 +100,135 @@ async function main() {
     process.exit(1);
   }
 
-  // ── Step 3: Fetch pages ───────────────────────────────────────────
-  spin.start('Fetching your pages...');
-
-  let topLevelItems;
-  try {
-    topLevelItems = await notion.getTopLevelPages();
-  } catch (err) {
-    spin.stop('Failed to fetch pages.');
-    p.log.error(`Error: ${err.message}`);
-    process.exit(1);
-  }
-
-  spin.stop(`Found ${topLevelItems.length} top-level item${topLevelItems.length === 1 ? '' : 's'}.`);
-
-  if (topLevelItems.length === 0) {
+  // ── Step 3: Share pages with integration ──────────────────────────
+  if (!savedConfig?.token || savedConfig.token !== token) {
     p.note(
       [
-        'No pages or databases found. This usually means you haven\'t shared',
-        'any pages with your integration yet.',
+        'Now share ALL the pages you want to download:',
         '',
-        'To fix this:',
         '  1. Open a page in Notion',
         '  2. Click the ••• menu at the top right',
         '  3. Select "Connections"',
         '  4. Add your integration',
         '',
+        'Repeat for each top-level page or database you want.',
         'Sharing a parent page automatically shares all its children.',
+        '',
+        'Don\'t worry if you miss some — you can add more later.',
       ].join('\n'),
-      'No content found'
+      'Step 2: Share pages with your integration'
     );
-    process.exit(0);
+
+    exitIfCancelled(
+      await p.confirm({
+        message: 'I\'ve shared my pages. Continue?',
+      })
+    );
   }
 
-  // ── Step 4: Select pages ──────────────────────────────────────────
-  const options = topLevelItems.map((item) => ({
-    value: item,
-    label: item.title,
-    hint: item.type === 'database' ? 'database' : undefined,
-  }));
+  // ── Step 3: Fetch & select pages (with refresh loop) ──────────────
+  let selected;
 
-  const selected = exitIfCancelled(
-    await p.multiselect({
-      message: 'Select pages to download:',
-      options,
-      required: true,
-    })
-  );
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    spin.start('Fetching your pages...');
 
-  // ── Step 5: Save location ─────────────────────────────────────────
-  const defaultPath = getDefaultSavePath();
+    let topLevelItems;
+    try {
+      topLevelItems = await notion.getTopLevelPages();
+    } catch (err) {
+      spin.stop('Failed to fetch pages.');
+      p.log.error(`Error: ${err.message}`);
+      process.exit(1);
+    }
 
-  const rawSavePath = exitIfCancelled(
-    await p.text({
-      message: 'Where should we save the files?',
-      initialValue: defaultPath,
-      validate: (val) => {
-        if (!val?.trim()) return 'Path is required.';
-      },
-    })
-  );
+    spin.stop(`Found ${topLevelItems.length} top-level item${topLevelItems.length === 1 ? '' : 's'}.`);
 
-  const savePath = path.resolve(rawSavePath);
+    if (topLevelItems.length === 0) {
+      p.log.warn('No pages found. Make sure you\'ve shared at least one page with your integration.');
 
-  // Check if directory already exists with content
-  if (existsSync(savePath)) {
-    const overwrite = exitIfCancelled(
-      await p.confirm({
-        message: `"${savePath}" already exists. Overwrite?`,
+      const retry = exitIfCancelled(
+        await p.confirm({
+          message: 'Share some pages in Notion, then try again?',
+        })
+      );
+
+      if (!retry) {
+        p.cancel('No pages to download.');
+        process.exit(0);
+      }
+      continue;
+    }
+
+    const options = topLevelItems.map((item) => ({
+      value: item,
+      label: item.title,
+      hint: item.type === 'database' ? 'database' : undefined,
+    }));
+
+    p.log.info('Hint: arrows move, space toggle, enter confirm');
+
+    selected = exitIfCancelled(
+      await p.multiselect({
+        message: 'Select pages to download:',
+        options,
+        initialValues: topLevelItems,
+        required: true,
       })
     );
 
-    if (!overwrite) {
-      p.cancel('Cancelled. Choose a different location next time.');
-      process.exit(0);
+    const looksGood = exitIfCancelled(
+      await p.confirm({
+        message: 'Look good? (No = share more pages in Notion and refresh the list)',
+      })
+    );
+
+    if (!looksGood) {
+      p.log.info('Go to Notion and share more pages with your integration.');
+      exitIfCancelled(
+        await p.confirm({ message: 'Done sharing? Press Enter to refresh.' })
+      );
+      continue;
     }
+
+    break;
+  }
+
+  // ── Step 5: Save location ─────────────────────────────────────────
+  const locationOptions = getSaveLocationOptions();
+
+  let savePath;
+
+  const locationChoice = exitIfCancelled(
+    await p.select({
+      message: 'Where should we save the files?',
+      options: locationOptions,
+    })
+  );
+
+  if (locationChoice === 'custom') {
+    const rawPath = exitIfCancelled(
+      await p.text({
+        message: 'Enter the full path:',
+        validate: (val) => {
+          if (!val?.trim()) return 'Path is required.';
+        },
+      })
+    );
+    savePath = path.resolve(rawPath);
+  } else {
+    savePath = locationChoice;
+  }
+
+  // Validate the path is writable
+  if (!(await isWritablePath(savePath))) {
+    p.log.error(`Cannot write to "${savePath}". Check that the folder exists and you have permission.`);
+    process.exit(1);
+  }
+
+  // Inform user about merge behavior if directory exists
+  if (existsSync(savePath)) {
+    p.log.info(`"${savePath}" already exists. New pages will be added, existing pages will be updated.`);
   }
 
   // ── Step 6: Confirm & Download ────────────────────────────────────
@@ -188,13 +258,22 @@ async function main() {
   }
 
   // ── Download ──────────────────────────────────────────────────────
-  spin.start('Downloading...');
+  spin.start('Starting download...');
 
-  const stats = await downloadPages(selected, savePath, notion, (message) => {
-    spin.message(`Downloading... ${message}`);
+  const stats = await downloadPages(selected, savePath, notion, {
+    onStatus: (message) => spin.message(message),
+    onLog: (message) => {
+      spin.stop(message);
+      spin.start('...');
+    },
+    onError: (message) => {
+      spin.stop('');
+      p.log.warn(message);
+      spin.start('Continuing...');
+    },
   });
 
-  spin.stop('Download complete.');
+  spin.stop(`${stats.totalPages} page${stats.totalPages === 1 ? '' : 's'}, ${stats.totalAssets} asset${stats.totalAssets === 1 ? '' : 's'} downloaded.`);
 
   // ── Summary ───────────────────────────────────────────────────────
   const summary = [`${stats.totalPages} page${stats.totalPages === 1 ? '' : 's'} downloaded`];

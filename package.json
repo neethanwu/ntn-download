@@ -1,10 +1,10 @@
 {
-  "name": "notion-to-fs",
-  "version": "1.0.0",
+  "name": "notion-download",
+  "version": "0.1.0",
   "description": "Download your Notion content to local Markdown files. Beautiful CLI, clean output, ready for AI agents.",
   "type": "module",
   "bin": {
-    "notion-to-fs": "./bin/cli.js"
+    "notion-download": "./bin/cli.js"
   },
   "files": [
     "bin/",
@@ -19,7 +19,9 @@
     "export",
     "cli",
     "notion-to-markdown",
-    "notion-export"
+    "notion-export",
+    "notion-download",
+    "ai-agents"
   ],
   "license": "MIT",
   "dependencies": {

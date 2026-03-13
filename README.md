@@ -1,4 +1,4 @@
-# notion-to-fs
+# notion-download
 
 Download your Notion content to local Markdown files. Beautiful guided CLI, clean output, ready for AI coding agents.
 
@@ -13,7 +13,7 @@ Notion's MCP server and API are token-expensive. If you use AI coding agents lik
 ## Quick Start
 
 ```
-npx notion-to-fs
+npx notion-download
 ```
 
 That's it. The tool will walk you through everything.
@@ -26,7 +26,7 @@ The CLI guides you through this, but here's the overview:
 
 Go to: [notion.so/profile/integrations/internal/form/new-integration](https://www.notion.so/profile/integrations/internal/form/new-integration)
 
-- **Name:** anything you want (e.g. "notion-to-fs")
+- **Name:** anything you want (e.g. "export-to-fs") — cannot contain the word "notion"
 - **Associated workspace:** select yours
 - **Icon:** skip it
 - Click **Create**
@@ -34,12 +34,15 @@ Go to: [notion.so/profile/integrations/internal/form/new-integration](https://ww
 **2. Set capabilities**
 
 On the next page, under **Capabilities**:
-- **Read content** — check this (the only one you need)
-- **Update content** — uncheck
-- **Insert content** — uncheck
-- **Read comments** — uncheck
-- **Insert comments** — uncheck
-- **User capabilities** — select "No user information"
+- **Content capabilities:**
+  - **Read content** — check this (the only one you need)
+  - **Update content** — uncheck
+  - **Insert content** — uncheck
+- **Comment capabilities:**
+  - **Read comments** — uncheck
+  - **Insert comments** — uncheck
+- **User capabilities:**
+  - Select **"No user information"**
 
 Click **Save**.
 
