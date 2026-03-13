@@ -1,11 +1,11 @@
-import { Client } from '@notionhq/client';
+import { Client, LogLevel } from '@notionhq/client';
 
 /**
  * Thin wrapper around the Notion API with built-in rate limiting and pagination.
  */
 export class NotionClient {
   constructor(token) {
-    this.client = new Client({ auth: token });
+    this.client = new Client({ auth: token, logLevel: LogLevel.ERROR });
     this._queue = Promise.resolve();
     this._minInterval = 340; // ~3 req/s with margin
   }
@@ -66,6 +66,10 @@ export class NotionClient {
     // their parent also in the set (i.e., they're not top-level).
     const allIds = new Set(allItems.map((item) => item.id));
 
+    // Cache for parent lookups — inline databases don't appear in search
+    // results, so we fetch their metadata to check ancestry.
+    const parentCache = new Map();
+
     const topLevel = [];
 
     for (const item of allItems) {
@@ -75,7 +79,69 @@ export class NotionClient {
       const parentId = item.parent?.page_id || item.parent?.database_id;
       const parentInResults = parentId && allIds.has(parentId);
 
-      if (item.parent?.type !== 'workspace' && parentInResults) continue;
+      if (item.parent?.type === 'workspace') {
+        // Workspace-level items are always top-level
+      } else if (parentInResults) {
+        // Parent is in search results — this item is nested, skip it
+        continue;
+      } else if (item.parent?.type === 'block_id' && item.parent?.block_id) {
+        // Child pages inside a page are parented to a block, not the page.
+        // Walk up the block's parent chain to find the owning page/database.
+        try {
+          let currentId = item.parent.block_id;
+          let found = false;
+          // Walk up to 5 levels of block nesting (toggles inside columns, etc.)
+          for (let i = 0; i < 5; i++) {
+            if (!parentCache.has(currentId)) {
+              const block = await this._throttledCall(() =>
+                this.client.blocks.retrieve({ block_id: currentId })
+              );
+              parentCache.set(currentId, block);
+            }
+            const block = parentCache.get(currentId);
+            const ownerId = block?.parent?.page_id || block?.parent?.database_id;
+            if (ownerId && allIds.has(ownerId)) {
+              found = true;
+              break;
+            }
+            // If the block's parent is another block, keep walking up
+            if (block?.parent?.type === 'block_id' && block?.parent?.block_id) {
+              currentId = block.parent.block_id;
+              continue;
+            }
+            break;
+          }
+          if (found) continue;
+        } catch {
+          // Block not accessible — the parent page isn't shared with
+          // the integration, so this item is a legitimate root.
+        }
+      } else if (parentId) {
+        // Parent NOT in search results — could be an inline database.
+        // Fetch the parent to check if *its* parent is in our results.
+        try {
+          if (!parentCache.has(parentId)) {
+            if (item.parent?.type === 'database_id') {
+              const db = await this._throttledCall(() =>
+                this.client.databases.retrieve({ database_id: parentId })
+              );
+              parentCache.set(parentId, db);
+            } else {
+              const pg = await this._throttledCall(() =>
+                this.client.pages.retrieve({ page_id: parentId })
+              );
+              parentCache.set(parentId, pg);
+            }
+          }
+          const parentObj = parentCache.get(parentId);
+          const grandparentId = parentObj?.parent?.page_id || parentObj?.parent?.database_id;
+          if (grandparentId && allIds.has(grandparentId)) {
+            continue;
+          }
+        } catch {
+          // If we can't fetch the parent, treat the item as top-level
+        }
+      }
 
       if (item.object === 'page') {
         topLevel.push({

@@ -174,7 +174,6 @@ async function main() {
       await p.multiselect({
         message: 'Select pages to download:',
         options,
-        initialValues: topLevelItems,
         required: true,
       })
     );
