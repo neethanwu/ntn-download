@@ -1,9 +1,19 @@
 import * as p from '@clack/prompts';
+import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { NotionClient } from './notion.js';
 import { loadConfig, saveConfig } from './config.js';
 import { getDefaultSavePath } from './utils.js';
 import { downloadPages } from './download.js';
+
+/** Exit cleanly if the user cancels a prompt. */
+function exitIfCancelled(value) {
+  if (p.isCancel(value)) {
+    p.cancel('Cancelled.');
+    process.exit(0);
+  }
+  return value;
+}
 
 async function main() {
   p.intro('notion-to-fs');
@@ -15,14 +25,11 @@ async function main() {
   const savedConfig = await loadConfig();
 
   if (savedConfig?.token) {
-    const useSaved = await p.confirm({
-      message: `Use saved token${savedConfig.workspace ? ` for "${savedConfig.workspace}"` : ''}?`,
-    });
-
-    if (p.isCancel(useSaved)) {
-      p.cancel('Cancelled.');
-      process.exit(0);
-    }
+    const useSaved = exitIfCancelled(
+      await p.confirm({
+        message: `Use saved token${savedConfig.workspace ? ` for "${savedConfig.workspace}"` : ''}?`,
+      })
+    );
 
     if (useSaved) {
       token = savedConfig.token;
@@ -45,22 +52,17 @@ async function main() {
       'First, set up a Notion integration'
     );
 
-    const tokenInput = await p.password({
-      message: 'Paste your integration token:',
-      validate: (val) => {
-        if (!val) return 'Token is required.';
-        if (!val.startsWith('ntn_') && !val.startsWith('secret_')) {
-          return 'Token should start with "ntn_" (or "secret_" for older tokens).';
-        }
-      },
-    });
-
-    if (p.isCancel(tokenInput)) {
-      p.cancel('Cancelled.');
-      process.exit(0);
-    }
-
-    token = tokenInput;
+    token = exitIfCancelled(
+      await p.password({
+        message: 'Paste your integration token:',
+        validate: (val) => {
+          if (!val) return 'Token is required.';
+          if (!val.startsWith('ntn_') && !val.startsWith('secret_')) {
+            return 'Token should start with "ntn_" (or "secret_" for older tokens).';
+          }
+        },
+      })
+    );
   }
 
   // ── Step 2: Validate token ────────────────────────────────────────
@@ -77,7 +79,7 @@ async function main() {
     p.log.error(
       err.status === 401
         ? 'Invalid token. Make sure you copied the "Internal Integration Secret", not the Integration ID.'
-        : `Could not connect to Notion: ${err.message}`
+        : 'Could not connect to Notion. Check your internet connection and try again.'
     );
     process.exit(1);
   }
@@ -122,62 +124,64 @@ async function main() {
     hint: item.type === 'database' ? 'database' : undefined,
   }));
 
-  const selected = await p.multiselect({
-    message: 'Select pages to download:',
-    options,
-    required: true,
-  });
-
-  if (p.isCancel(selected)) {
-    p.cancel('Cancelled.');
-    process.exit(0);
-  }
+  const selected = exitIfCancelled(
+    await p.multiselect({
+      message: 'Select pages to download:',
+      options,
+      required: true,
+    })
+  );
 
   // ── Step 5: Save location ─────────────────────────────────────────
   const defaultPath = getDefaultSavePath();
 
-  const savePath = await p.text({
-    message: 'Where should we save the files?',
-    initialValue: defaultPath,
-    validate: (val) => {
-      if (!val?.trim()) return 'Path is required.';
-    },
-  });
+  const rawSavePath = exitIfCancelled(
+    await p.text({
+      message: 'Where should we save the files?',
+      initialValue: defaultPath,
+      validate: (val) => {
+        if (!val?.trim()) return 'Path is required.';
+      },
+    })
+  );
 
-  if (p.isCancel(savePath)) {
-    p.cancel('Cancelled.');
-    process.exit(0);
-  }
+  const savePath = path.resolve(rawSavePath);
 
   // Check if directory already exists with content
   if (existsSync(savePath)) {
-    const overwrite = await p.confirm({
-      message: `"${savePath}" already exists. Overwrite?`,
-    });
+    const overwrite = exitIfCancelled(
+      await p.confirm({
+        message: `"${savePath}" already exists. Overwrite?`,
+      })
+    );
 
-    if (p.isCancel(overwrite) || !overwrite) {
+    if (!overwrite) {
       p.cancel('Cancelled. Choose a different location next time.');
       process.exit(0);
     }
   }
 
   // ── Step 6: Confirm & Download ────────────────────────────────────
-  const proceed = await p.confirm({
-    message: `Download ${selected.length} item${selected.length === 1 ? '' : 's'} to ${savePath}?`,
-  });
+  const proceed = exitIfCancelled(
+    await p.confirm({
+      message: `Download ${selected.length} item${selected.length === 1 ? '' : 's'} to ${savePath}?`,
+    })
+  );
 
-  if (p.isCancel(proceed) || !proceed) {
+  if (!proceed) {
     p.cancel('Cancelled.');
     process.exit(0);
   }
 
   // Save token for future use (if it's a new token)
   if (!savedConfig?.token || savedConfig.token !== token) {
-    const shouldSave = await p.confirm({
-      message: 'Save token for future use? (stored in ~/.notion-to-fs/config.json)',
-    });
+    const shouldSave = exitIfCancelled(
+      await p.confirm({
+        message: 'Save token for future use? (stored in ~/.notion-to-fs/config.json)',
+      })
+    );
 
-    if (!p.isCancel(shouldSave) && shouldSave) {
+    if (shouldSave) {
       await saveConfig({ token, workspace: workspaceName });
       p.log.success('Token saved.');
     }
@@ -212,7 +216,7 @@ async function main() {
   p.outro(`Done! ${summary.join(', ')}.`);
 }
 
-main().catch((err) => {
-  p.log.error(`Unexpected error: ${err.message}`);
+main().catch(() => {
+  p.log.error('Unexpected error. Please try again.');
   process.exit(1);
 });

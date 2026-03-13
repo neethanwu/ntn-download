@@ -36,7 +36,7 @@ export function sanitizeFilename(title, maxLength = 200) {
     .trim()
     .replace(/[. ]+$/, '');      // Trim trailing dots and spaces (Windows issue)
 
-  if (!name) {
+  if (!name || /^\.{1,2}$/.test(name)) {
     return 'Untitled';
   }
 

@@ -6,20 +6,20 @@ import { Client } from '@notionhq/client';
 export class NotionClient {
   constructor(token) {
     this.client = new Client({ auth: token });
-    this._lastRequestTime = 0;
+    this._queue = Promise.resolve();
     this._minInterval = 340; // ~3 req/s with margin
   }
 
   /**
-   * Throttle requests to stay under Notion's 3 req/s limit.
+   * Serialize and throttle all API requests to stay under Notion's 3 req/s limit.
+   * Uses a promise chain to ensure mutual exclusion (no concurrent requests).
    */
-  async _throttle() {
-    const now = Date.now();
-    const elapsed = now - this._lastRequestTime;
-    if (elapsed < this._minInterval) {
-      await new Promise((r) => setTimeout(r, this._minInterval - elapsed));
-    }
-    this._lastRequestTime = Date.now();
+  _throttledCall(fn) {
+    this._queue = this._queue.then(async () => {
+      await new Promise((r) => setTimeout(r, this._minInterval));
+      return fn();
+    });
+    return this._queue;
   }
 
   /**
@@ -31,8 +31,9 @@ export class NotionClient {
     let cursor = undefined;
 
     do {
-      await this._throttle();
-      const response = await fn({ start_cursor: cursor });
+      const response = await this._throttledCall(() =>
+        fn({ start_cursor: cursor })
+      );
       allResults.push(...response.results);
       cursor = response.has_more ? response.next_cursor : undefined;
     } while (cursor);
@@ -42,32 +43,21 @@ export class NotionClient {
 
   /**
    * Validate the token by making a test search call.
-   * Returns true if valid, throws on failure.
+   * Returns the response on success, throws on failure.
    */
   async validateToken() {
-    await this._throttle();
-    const response = await this.client.search({ page_size: 1 });
-    return response;
+    return this._throttledCall(() =>
+      this.client.search({ page_size: 1 })
+    );
   }
 
   /**
    * Get all top-level pages and databases shared with the integration.
-   * Filters to items whose parent is the workspace (not nested inside another page).
+   * Uses a single search call (halves API requests vs separate page/database queries).
    */
   async getTopLevelPages() {
-    // Fetch all pages
-    const pages = await this.paginate((opts) =>
+    const allItems = await this.paginate((opts) =>
       this.client.search({
-        filter: { property: 'object', value: 'page' },
-        page_size: 100,
-        ...opts,
-      })
-    );
-
-    // Fetch all databases
-    const databases = await this.paginate((opts) =>
-      this.client.search({
-        filter: { property: 'object', value: 'database' },
         page_size: 100,
         ...opts,
       })
@@ -75,22 +65,20 @@ export class NotionClient {
 
     const topLevel = [];
 
-    for (const page of pages) {
-      if (page.parent?.type === 'workspace') {
-        topLevel.push({
-          id: page.id,
-          type: 'page',
-          title: extractTitle(page),
-        });
-      }
-    }
+    for (const item of allItems) {
+      if (item.parent?.type !== 'workspace') continue;
 
-    for (const db of databases) {
-      if (db.parent?.type === 'workspace') {
+      if (item.object === 'page') {
         topLevel.push({
-          id: db.id,
+          id: item.id,
+          type: 'page',
+          title: extractTitle(item),
+        });
+      } else if (item.object === 'database') {
+        topLevel.push({
+          id: item.id,
           type: 'database',
-          title: extractDatabaseTitle(db),
+          title: extractDatabaseTitle(item),
         });
       }
     }
@@ -128,15 +116,16 @@ export class NotionClient {
    * Retrieve a single page's properties.
    */
   async getPage(pageId) {
-    await this._throttle();
-    return this.client.pages.retrieve({ page_id: pageId });
+    return this._throttledCall(() =>
+      this.client.pages.retrieve({ page_id: pageId })
+    );
   }
 }
 
 /**
  * Extract a page's title from its properties.
  */
-function extractTitle(page) {
+export function extractTitle(page) {
   if (!page.properties) return 'Untitled';
 
   for (const prop of Object.values(page.properties)) {
