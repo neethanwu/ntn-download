@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-03-13
+
+### Fixed
+
+- Config directory renamed from `~/.notion-to-fs` to `~/.pagesdown`
+- Updated all internal references to match `pagesdown` package name
+
 ## [0.1.0] - 2026-03-13
 
 ### Added
@@ -31,5 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - ANSI Shadow ASCII art banner
 - MIT license
 
-[Unreleased]: https://github.com/neethanwu/pagesdown/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/neethanwu/pagesdown/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/neethanwu/pagesdown/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/neethanwu/pagesdown/releases/tag/v0.1.0

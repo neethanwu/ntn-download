@@ -1,6 +1,6 @@
 {
   "name": "pagesdown",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Download your Notion content to local Markdown files. Beautiful CLI, clean output, ready for AI agents.",
   "type": "module",
   "bin": {

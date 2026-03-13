@@ -32,7 +32,7 @@ const BANNER = `
 
 async function main() {
   console.log(BANNER);
-  p.intro('pagesdown v0.1.0');
+  p.intro('pagesdown v0.1.1');
 
   // ── Step 1: Token ─────────────────────────────────────────────────
   let token = null;
